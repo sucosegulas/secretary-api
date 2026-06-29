@@ -3,6 +3,7 @@ const fs = require('fs')
 const sessions = new Map()
 const { baseWebhookURL, sessionFolderPath, maxAttachmentSize, setMessagesAsSeen, webVersion, webVersionCacheType, recoverSessions } = require('./config')
 const { triggerWebhook, waitForNestedObject, checkIfEventisEnabled } = require('./utils')
+const { processIncomingMessage, processOutgoingMessage } = require('./botLogic')
 
 // Function to validate if the session is ready
 const validateSession = async (sessionId) => {
@@ -249,6 +250,12 @@ const initializeEvents = (client, sessionId) => {
     .then(_ => {
       client.on('message', async (message) => {
         triggerWebhook(sessionWebhook, sessionId, 'message', { message })
+        
+        // Process incoming message with bot logic
+        if (!message.fromMe) {
+          await processIncomingMessage(sessionId, message)
+        }
+        
         if (message.hasMedia && message._data?.size < maxAttachmentSize) {
           // custom service event
           checkIfEventisEnabled('media').then(_ => {
@@ -281,6 +288,12 @@ const initializeEvents = (client, sessionId) => {
     .then(_ => {
       client.on('message_create', async (message) => {
         triggerWebhook(sessionWebhook, sessionId, 'message_create', { message })
+        
+        // Process outgoing message with bot logic (detect human intervention)
+        if (message.fromMe) {
+          await processOutgoingMessage(sessionId, message)
+        }
+        
         if (setMessagesAsSeen) {
           const chat = await message.getChat()
           chat.sendSeen()

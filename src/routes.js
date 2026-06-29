@@ -12,6 +12,7 @@ const chatController = require('./controllers/chatController')
 const groupChatController = require('./controllers/groupChatController')
 const messageController = require('./controllers/messageController')
 const contactController = require('./controllers/contactController')
+const botController = require('./controllers/botController')
 
 /**
  * ================
@@ -174,6 +175,20 @@ contactRouter.post('/unblock/:sessionId', [middleware.sessionNameValidation, mid
 contactRouter.post('/getFormattedNumber/:sessionId', [middleware.sessionNameValidation, middleware.sessionValidation], contactController.getFormattedNumber)
 contactRouter.post('/getCountryCode/:sessionId', [middleware.sessionNameValidation, middleware.sessionValidation], contactController.getCountryCode)
 contactRouter.post('/getProfilePicUrl/:sessionId', [middleware.sessionNameValidation, middleware.sessionValidation], contactController.getProfilePicUrl)
+
+/**
+ * ================
+ * BOT ENDPOINTS
+ * ================
+ */
+const botRouter = express.Router()
+botRouter.use(middleware.apikey)
+routes.use('/bot', botRouter)
+
+botRouter.post('/reset', botController.resetBotChat)
+botRouter.post('/reactivate', botController.reactivateBotChat)
+botRouter.get('/state/:chatId', botController.getBotState)
+
 /**
  * ================
  * SWAGGER ENDPOINTS
