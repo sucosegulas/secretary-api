@@ -5,6 +5,7 @@ const chatStates = new Map();
 
 // Configurações do bot
 const BOT_CONFIG = {
+  ENABLED: process.env.BOT_ENABLED === 'true',
   PHONE_NUMBER: '04932250710',
   SITE_URL: 'trailercarmotorhome.com',
   MAX_UNANSWERED_MESSAGES: 3,
@@ -15,6 +16,8 @@ const BOT_CONFIG = {
     { step: 4, message: `Confira nosso site: ${BOT_CONFIG.SITE_URL}` }
   ]
 };
+
+console.log('Bot initialized. ENABLED:', BOT_CONFIG.ENABLED);
 
 // Inicializar estado do chat
 function initChatState(chatId) {
@@ -49,11 +52,23 @@ function isHumanAttendant(message, chatId) {
 
 // Processar mensagem recebida
 async function processIncomingMessage(sessionId, message) {
+  console.log('Bot: Processing incoming message from', message.from, 'BOT_ENABLED:', BOT_CONFIG.ENABLED);
+  
+  if (!BOT_CONFIG.ENABLED) {
+    console.log('Bot: Disabled, skipping message processing');
+    return;
+  }
+
   const client = sessions.get(sessionId);
-  if (!client) return;
+  if (!client) {
+    console.log('Bot: Client not found for session', sessionId);
+    return;
+  }
 
   const chatId = message.from;
   const state = initChatState(chatId);
+
+  console.log('Bot: Chat state - currentStep:', state.currentStep, 'isHumanActive:', state.isHumanActive, 'unansweredCount:', state.unansweredCount);
 
   // Adicionar mensagem ao histórico
   state.messageHistory.push({
@@ -65,6 +80,7 @@ async function processIncomingMessage(sessionId, message) {
 
   // Se humano já está ativo, não intervir
   if (state.isHumanActive) {
+    console.log('Bot: Human is active, not intervening');
     state.unansweredCount = 0;
     return;
   }
@@ -72,26 +88,41 @@ async function processIncomingMessage(sessionId, message) {
   // Verificar se é mensagem do cliente (não do bot)
   if (!message.fromMe) {
     state.unansweredCount++;
+    console.log('Bot: Client message, unanswered count:', state.unansweredCount);
     
     // Regra 3: Se 3 mensagens sem resposta, enviar fallback
     if (state.unansweredCount >= BOT_CONFIG.MAX_UNANSWERED_MESSAGES) {
+      console.log('Bot: Sending fallback message');
       await sendFallbackMessage(client, chatId);
       state.unansweredCount = 0;
       return;
     }
 
     // Avançar no fluxo do bot
+    console.log('Bot: Advancing bot flow');
     await advanceBotFlow(client, chatId, state);
   }
 }
 
 // Processar mensagem enviada (para detectar intervenção humana)
 async function processOutgoingMessage(sessionId, message) {
+  console.log('Bot: Processing outgoing message to', message.to, 'BOT_ENABLED:', BOT_CONFIG.ENABLED);
+  
+  if (!BOT_CONFIG.ENABLED) {
+    console.log('Bot: Disabled, skipping outgoing message processing');
+    return;
+  }
+
   const client = sessions.get(sessionId);
-  if (!client) return;
+  if (!client) {
+    console.log('Bot: Client not found for session', sessionId);
+    return;
+  }
 
   const chatId = message.to;
   const state = initChatState(chatId);
+
+  console.log('Bot: Human intervention detected, stopping bot for chat', chatId);
 
   // Adicionar mensagem ao histórico
   state.messageHistory.push({
