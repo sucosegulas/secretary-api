@@ -1,0 +1,32 @@
+app = "secretary-api"
+primary_region = "gru"
+
+[env]
+  DATA_DIR = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_start_machines = true
+  auto_stop_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "15s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+# Persist WhatsApp (Baileys) auth so a restart does not force a new QR scan.
+# A Fly volume is per-machine, so keep this app on a SINGLE machine
+# (this server holds chat/instance state in memory and is not multi-instance safe).
+[[mounts]]
+  source = "secretary_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"
