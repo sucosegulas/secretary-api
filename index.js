@@ -13,6 +13,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Pasta onde a sessão do WhatsApp (Baileys) é salva. No Fly.io aponta para o
+// volume persistente montado em /data; localmente cai na pasta do projeto.
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -36,7 +43,7 @@ const processedMessageIds = new Set();
 const chatLocks = {};
 
 async function connectToWhatsApp(instanceId) {
-  const authFolder = `auth_info_${instanceId}`;
+  const authFolder = path.join(DATA_DIR, `auth_info_${instanceId}`);
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
 
   const sock = makeWASocket({
@@ -314,7 +321,7 @@ server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   // Connect default instance if exists, else it waits for POST /instances
   // To make it easy, we will auto-load any folder starting with auth_info_
-  const folders = fs.readdirSync(__dirname).filter(f => f.startsWith('auth_info_'));
+  const folders = fs.readdirSync(DATA_DIR).filter(f => f.startsWith('auth_info_'));
   if (folders.length > 0) {
     folders.forEach(f => {
       const id = f.replace('auth_info_', '');
