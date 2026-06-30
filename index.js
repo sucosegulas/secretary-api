@@ -23,6 +23,18 @@ const io = new Server(server, {
 const instances = {}; // instanceId -> { sock, qrCodeData, connectionStatus, phone }
 const chats = {}; // chatId -> { messages, state, unread, phone, instanceId, remoteJid, userName, userInterest }
 
+// Timestamp de inicialização do servidor (em segundos, igual ao messageTimestamp do WhatsApp)
+// Usado para ignorar mensagens "antigas" reenviadas pelo WhatsApp/Baileys após reconexão.
+const SERVER_START_TIME = Math.floor(Date.now() / 1000);
+
+// Controle de mensagens já processadas, para evitar reprocessar a mesma mensagem
+// mais de uma vez (o que causava o bot "emendar" várias respostas do fluxo seguidas).
+const processedMessageIds = new Set();
+
+// Trava por chat: enquanto está true, o bot não processa nova mensagem desse chat,
+// garantindo que cada etapa do fluxo só avance depois que o cliente responder.
+const chatLocks = {};
+
 async function connectToWhatsApp(instanceId) {
   const authFolder = `auth_info_${instanceId}`;
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
@@ -102,7 +114,23 @@ async function connectToWhatsApp(instanceId) {
       const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
       if (!text) continue;
 
+      // Ignora mensagens antigas (backlog reenviado pelo WhatsApp/Baileys após reconexão)
+      const msgTimestamp = Number(msg.messageTimestamp) || 0;
+      if (msgTimestamp && msgTimestamp < SERVER_START_TIME) continue;
+
+      // Ignora mensagens já processadas (evita reprocessar e disparar respostas duplicadas/em sequência)
+      if (msg.key.id) {
+        if (processedMessageIds.has(msg.key.id)) continue;
+        processedMessageIds.add(msg.key.id);
+      }
+
       const chatId = `${instanceId}:${remoteJid}`;
+
+      // Trava: se já existe um processamento em andamento para este chat, ignora
+      // (evita que duas mensagens do mesmo chat sejam processadas "ao mesmo tempo"
+      // e o bot acabe respondendo mais de uma etapa do fluxo de uma vez)
+      if (chatLocks[chatId]) continue;
+      chatLocks[chatId] = true;
 
       if (!chats[chatId]) {
         chats[chatId] = { 
@@ -127,8 +155,15 @@ async function connectToWhatsApp(instanceId) {
 
       io.emit('chat_update', { chatId, chat: chats[chatId] });
 
+      try {
       // Bot Logic (Trailercar Flow sem IA)
       const chatState = chats[chatId].state;
+
+      // Se um humano já assumiu o atendimento, o bot NUNCA responde automaticamente.
+      if (chatState === 'human') {
+        continue;
+      }
+
       if (chatState.startsWith('bot_')) {
         let replyText = '';
         let linkText = '';
@@ -198,6 +233,9 @@ async function connectToWhatsApp(instanceId) {
             io.emit('chat_update', { chatId, chat: chats[chatId] });
           }
         }
+      }
+      } finally {
+        chatLocks[chatId] = false;
       }
     }
   });
