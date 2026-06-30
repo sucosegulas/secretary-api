@@ -1,7 +1,10 @@
-const { sessions } = require('./sessions');
-
 // Estado dos chats gerenciados pelo bot
 const chatStates = new Map();
+
+// Helper function to get sessions (avoid circular dependency)
+function getSessions() {
+  return require('./sessions').sessions;
+}
 
 // Configurações do bot
 const BOT_CONFIG = {
@@ -9,13 +12,16 @@ const BOT_CONFIG = {
   PHONE_NUMBER: '04932250710',
   SITE_URL: 'trailercarmotorhome.com',
   MAX_UNANSWERED_MESSAGES: 3,
-  FLOW_STEPS: [
-    { step: 1, message: 'Olá! Bem-vindo à Trailercar Motorhomes. Como posso ajudar?' },
-    { step: 2, message: 'Você está interessado em quais modelos?' },
-    { step: 3, message: 'Temos opções excelentes! Gostaria de saber mais sobre?' },
-    { step: 4, message: `Confira nosso site: ${BOT_CONFIG.SITE_URL}` }
-  ]
+  FLOW_STEPS: []
 };
+
+// Define flow steps after BOT_CONFIG is initialized
+BOT_CONFIG.FLOW_STEPS = [
+  { step: 1, message: 'Olá! Bem-vindo à Trailercar Motorhomes. Como posso ajudar?' },
+  { step: 2, message: 'Você está interessado em quais modelos?' },
+  { step: 3, message: 'Temos opções excelentes! Gostaria de saber mais sobre?' },
+  { step: 4, message: `Confira nosso site: ${BOT_CONFIG.SITE_URL}` }
+];
 
 console.log('Bot initialized. ENABLED:', BOT_CONFIG.ENABLED);
 
@@ -59,6 +65,7 @@ async function processIncomingMessage(sessionId, message) {
     return;
   }
 
+  const sessions = getSessions();
   const client = sessions.get(sessionId);
   if (!client) {
     console.log('Bot: Client not found for session', sessionId);
@@ -113,6 +120,7 @@ async function processOutgoingMessage(sessionId, message) {
     return;
   }
 
+  const sessions = getSessions();
   const client = sessions.get(sessionId);
   if (!client) {
     console.log('Bot: Client not found for session', sessionId);
