@@ -136,7 +136,7 @@ async function connectToWhatsApp(instanceId) {
 
         if (chatState === 'bot_waiting_name') {
            if (chats[chatId].messages.length === 1) {
-             replyText = 'Olá! Bem-vindo(a) à Trailercar Motorhomes. 🚐✨\n\nPara eu conseguir te ajudar da melhor forma, como posso te chamar?';
+             replyText = 'Olá! Bem-vindo(a) à Trailercar Motorhome. 🚐✨\n\nPara eu conseguir te ajudar da melhor forma, como posso te chamar?';
            } else {
              chats[chatId].userName = text;
              chats[chatId].state = 'bot_waiting_interest';
@@ -150,7 +150,7 @@ async function connectToWhatsApp(instanceId) {
              chats[chatId].userInterest = 'Já tenho veículo';
              chats[chatId].state = 'human';
              replyText = 'Ótimo! Para agilizarmos, nos informe o modelo/ano do veículo e qual tipo de montagem tem em mente. Um especialista já vai te atender!';
-             linkText = 'Enquanto aguarda, veja nosso trabalho e inspire-se em nosso site: \nhttps://trailercarmotorhome.com';
+             linkText = 'Enquanto aguarda, veja nosso trabalho em nosso site: \nhttps://trailercarmotorhome.com';
            } else if (lowerText.includes('2') || lowerText.includes('comprar')) {
              chats[chatId].userInterest = 'Quero Comprar';
              chats[chatId].state = 'human';
@@ -159,15 +159,15 @@ async function connectToWhatsApp(instanceId) {
            } else if (lowerText.includes('3') || lowerText.includes('alugar')) {
              chats[chatId].userInterest = 'Quero Alugar';
              chats[chatId].state = 'human';
-             replyText = 'Legal! Nosso setor de locação vai verificar as datas disponíveis. Qual seria o período da viagem? Um consultor já vai falar com você.';
+             replyText = 'Legal! Qual seria o período da viagem? Nosso setor de locação vai verificar as datas disponíveis. ';
              linkText = 'Veja as opções de locação em nosso site: \nhttps://trailercarmotorhome.com/locacao.html';
            } else if (lowerText.includes('4') || lowerText.includes('dúvidas')) {
              chats[chatId].userInterest = 'Apenas dúvidas';
              chats[chatId].state = 'human';
              replyText = 'Sem problemas, estamos aqui para ajudar. Digite sua dúvida que alguém da nossa equipe vai te responder.';
-             linkText = 'Enquanto isso, você pode tirar muitas dúvidas visitando nosso site: \nhttps://trailercarmotorhome.com';
+             linkText = 'ou se preferir também pode visitar nosso site: \nhttps://trailercarmotorhome.com';
            } else {
-             replyText = 'Por favor, escolha uma das opções:\n\n1️⃣ Já tenho veículo\n2️⃣ Quero Comprar\n3️⃣ Quero Alugar\n4️⃣ Apenas dúvidas';
+             replyText = 'Por favor, escolha uma das opções:\n\n1️⃣ Já tenho veículo\n2️⃣ Quero Comprar\n3️⃣ Quero Alugar\n4️⃣ Dúvidas/Falar com Vendas';
            }
 
            if (chats[chatId].state === 'human') {
@@ -187,7 +187,7 @@ async function connectToWhatsApp(instanceId) {
 
           // Envia a segunda mensagem com o link, se houver
           if (linkText) {
-            await new Promise(resolve => setTimeout(resolve, 1000)); // pequeno delay para parecer natural
+            await new Promise(resolve => setTimeout(resolve, 3000)); // pequeno delay para parecer natural
             await sock.sendMessage(remoteJid, { text: linkText });
             chats[chatId].messages.push({
               id: 'bot-link-' + Date.now(),
