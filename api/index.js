@@ -328,6 +328,99 @@ app.post('/instances/pair', async (req, res) => {
   res.json({ instanceId, phone, pairingRequested: true, message: 'Solicitação de pareamento enviada' });
 });
 
+app.post('/instances/pair-with-chat', async (req, res) => {
+  const { chatId } = req.body;
+  const chat = chats[chatId];
+  if (!chat) return res.status(404).json({ error: 'Chat não encontrado' });
+
+  const sourceInstance = instances[chat.instanceId];
+  if (!sourceInstance || !sourceInstance.sock || sourceInstance.connectionStatus !== 'CONNECTED') {
+    return res.status(400).json({ error: 'Instância de origem não está conectada' });
+  }
+
+  const phone = chat.phone;
+  const instanceId = crypto.randomBytes(4).toString('hex');
+  const isProtected = req.body?.protected === true;
+  const authFolder = `${AUTH_BASE}/auth_info_${instanceId}`;
+  const { state, saveCreds } = await useMultiFileAuthState(authFolder);
+
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+    logger: pino({ level: 'silent' }),
+    browser: ['Secretaria Virtual', 'Chrome', '1.0.0']
+  });
+
+  saveConfig(instanceId, { mode: 'monitor', protected: isProtected });
+  instances[instanceId] = { sock, qrCodeData: '', connectionStatus: 'PAIRING', phone, mode: 'monitor', protected: isProtected, pairingCode: '' };
+
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    const safeData = () => ({
+      connectionStatus: instances[instanceId].connectionStatus,
+      qrCodeData: instances[instanceId].qrCodeData,
+      phone: instances[instanceId].phone,
+      mode: instances[instanceId].mode,
+      protected: instances[instanceId].protected,
+      pairingCode: instances[instanceId].pairingCode
+    });
+
+    if (qr && !instances[instanceId].pairingCode) {
+      instances[instanceId].qrCodeData = await qrcode.toDataURL(qr);
+      instances[instanceId].connectionStatus = 'QR_READY';
+      io.emit('instance_update', { instanceId, data: safeData() });
+    }
+
+    if (connection === 'close') {
+      const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      instances[instanceId].connectionStatus = 'DISCONNECTED';
+      io.emit('instance_update', { instanceId, data: safeData() });
+      if (shouldReconnect) {
+        connectToWhatsApp(instanceId);
+      } else {
+        fs.rmSync(authFolder, { recursive: true, force: true });
+        instances[instanceId].qrCodeData = '';
+        instances[instanceId].sock = null;
+        io.emit('instance_update', { instanceId, data: safeData() });
+      }
+    } else if (connection === 'open') {
+      instances[instanceId].connectionStatus = 'CONNECTED';
+      instances[instanceId].qrCodeData = '';
+      instances[instanceId].pairingCode = '';
+      instances[instanceId].phone = sock.user.id.split(':')[0];
+      io.emit('instance_update', { instanceId, data: safeData() });
+    }
+  });
+
+  sock.ev.on('creds.update', saveCreds);
+
+  setTimeout(async () => {
+    try {
+      const code = await sock.requestPairingCode(phone);
+      const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
+      instances[instanceId].pairingCode = formattedCode;
+
+      await sourceInstance.sock.sendMessage(chat.remoteJid, {
+        text: `🔐 *Código de Conexão*\n\nPara conectar seu número ao nosso atendimento sem precisar escanear QR:\n\n1️⃣ Abra o WhatsApp\n2️⃣ Toque nos ⋮ (3 pontinhos) > *Dispositivos Conectados*\n3️⃣ Toque em *"Conectar com número de telefone"*\n4️⃣ Digite o código abaixo:\n\n*${formattedCode}*`
+      });
+
+      io.emit('instance_update', { instanceId, data: {
+        connectionStatus: 'PAIRING',
+        qrCodeData: '',
+        phone,
+        mode: instances[instanceId].mode,
+        protected: instances[instanceId].protected,
+        pairingCode: formattedCode
+      }});
+    } catch (err) {
+      console.error(`Pairing chat error for ${phone}:`, err);
+    }
+  }, 2000);
+
+  res.json({ instanceId, phone, pairingRequested: true, message: 'Código enviado via WhatsApp' });
+});
+
 app.post('/instances/:id/mode', (req, res) => {
   const { id } = req.params;
   const { mode } = req.body;
