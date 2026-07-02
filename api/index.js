@@ -329,7 +329,7 @@ app.post('/instances/pair', async (req, res) => {
 });
 
 app.post('/instances/pair-with-chat', async (req, res) => {
-  const { chatId } = req.body;
+  const { chatId, phone: reqPhone } = req.body;
   const chat = chats[chatId];
   if (!chat) return res.status(404).json({ error: 'Chat não encontrado' });
 
@@ -338,7 +338,7 @@ app.post('/instances/pair-with-chat', async (req, res) => {
     return res.status(400).json({ error: 'Instância de origem não está conectada' });
   }
 
-  const phone = chat.phone;
+  const phone = reqPhone || chat.phone;
   const instanceId = crypto.randomBytes(4).toString('hex');
   const isProtected = req.body?.protected === true;
   const authFolder = `${AUTH_BASE}/auth_info_${instanceId}`;

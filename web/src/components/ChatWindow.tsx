@@ -59,16 +59,18 @@ export default function ChatWindow({ chat, onSend, onResolve, instances }: ChatW
             <>
               <button
                 onClick={async () => {
+                  const phone = prompt('Digite o número de telefone do cliente (ex: 5549999522498):');
+                  if (!phone) return;
                   const chatId = `${chat.instanceId}:${chat.remoteJid}`;
                   try {
                     const res = await fetch(`${API_URL}/instances/pair-with-chat`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ chatId }),
+                      body: JSON.stringify({ chatId, phone }),
                     });
                     const data = await res.json();
                     if (data.pairingRequested) {
-                      alert(`✅ Código enviado para +${chat.phone}!\n\nO cliente recebeu uma mensagem com o código de pareamento.`);
+                      alert(`✅ Código enviado para o cliente!\n\nUma mensagem foi enviada no WhatsApp dele com o código de pareamento.`);
                     } else {
                       alert('Erro: ' + (data.error || 'desconhecido'));
                     }
