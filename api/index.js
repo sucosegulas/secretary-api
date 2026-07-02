@@ -20,11 +20,20 @@ const io = new Server(server, {
   }
 });
 
-const instances = {}; // instanceId -> { sock, qrCodeData, connectionStatus, phone }
+const instances = {}; // instanceId -> { sock, qrCodeData, connectionStatus, phone, mode, protected }
+const INSTANCE_FILE = '.instance_config.json';
+const AUTH_BASE = fs.existsSync('/data') ? '/data' : __dirname;
+
+function saveConfig(instanceId, data) {
+  try { fs.writeFileSync(`${AUTH_BASE}/auth_info_${instanceId}/${INSTANCE_FILE}`, JSON.stringify(data)); } catch {}
+}
+function loadConfig(instanceId) {
+  try { return JSON.parse(fs.readFileSync(`${AUTH_BASE}/auth_info_${instanceId}/${INSTANCE_FILE}`, 'utf8')); } catch { return {}; }
+}
 const chats = {}; // chatId -> { messages, state, unread, phone, instanceId, remoteJid, userName, userInterest }
 
-async function connectToWhatsApp(instanceId) {
-  const authFolder = `auth_info_${instanceId}`;
+async function connectToWhatsApp(instanceId, mode = 'bot', isProtected = false) {
+  const authFolder = `${AUTH_BASE}/auth_info_${instanceId}`;
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
 
   const sock = makeWASocket({
@@ -34,10 +43,13 @@ async function connectToWhatsApp(instanceId) {
     browser: ['Secretaria Virtual', 'Chrome', '1.0.0']
   });
 
+  saveConfig(instanceId, { mode, protected: isProtected });
   if (!instances[instanceId]) {
-    instances[instanceId] = { sock: null, qrCodeData: '', connectionStatus: 'DISCONNECTED', phone: '' };
+    instances[instanceId] = { sock: null, qrCodeData: '', connectionStatus: 'DISCONNECTED', phone: '', mode, protected: false };
   }
   instances[instanceId].sock = sock;
+  instances[instanceId].mode = mode;
+  instances[instanceId].protected = isProtected;
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
@@ -45,7 +57,9 @@ async function connectToWhatsApp(instanceId) {
     const safeData = {
       connectionStatus: instances[instanceId].connectionStatus,
       qrCodeData: instances[instanceId].qrCodeData,
-      phone: instances[instanceId].phone
+      phone: instances[instanceId].phone,
+      mode: instances[instanceId].mode,
+      protected: instances[instanceId].protected
     };
 
     if (qr) {
@@ -127,7 +141,10 @@ async function connectToWhatsApp(instanceId) {
 
       io.emit('chat_update', { chatId, chat: chats[chatId] });
 
-      // Bot Logic (Trailercar Flow sem IA)
+      // Bot Logic (apenas se modo for 'bot')
+      const instanceMode = instances[instanceId]?.mode || 'bot';
+      if (instanceMode !== 'bot') continue;
+
       const chatState = chats[chatId].state;
       if (chatState.startsWith('bot_')) {
         let replyText = '';
@@ -209,7 +226,9 @@ app.get('/instances', (req, res) => {
     acc[id] = {
       connectionStatus: instances[id].connectionStatus,
       qrCodeData: instances[id].qrCodeData,
-      phone: instances[id].phone
+      phone: instances[id].phone,
+      mode: instances[id].mode,
+      protected: instances[id].protected
     };
     return acc;
   }, {});
@@ -218,13 +237,54 @@ app.get('/instances', (req, res) => {
 
 app.post('/instances', (req, res) => {
   const instanceId = crypto.randomBytes(4).toString('hex');
-  connectToWhatsApp(instanceId);
-  res.json({ instanceId, message: 'Instance created and connecting' });
+  const mode = req.body?.mode || 'bot';
+  const isProtected = req.body?.protected === true;
+  connectToWhatsApp(instanceId, mode, isProtected);
+  res.json({ instanceId, mode, protected: isProtected, message: `Instance created and connecting (mode: ${mode})` });
+});
+
+app.post('/instances/:id/mode', (req, res) => {
+  const { id } = req.params;
+  const { mode } = req.body;
+  if (!mode || !['bot', 'monitor'].includes(mode)) {
+    return res.status(400).json({ error: 'Modo inválido. Use "bot" ou "monitor".' });
+  }
+  if (!instances[id]) return res.status(404).json({ error: 'Instance not found' });
+  instances[id].mode = mode;
+  saveMode(id, mode);
+  io.emit('instance_update', { instanceId: id, data: {
+    connectionStatus: instances[id].connectionStatus,
+    qrCodeData: instances[id].qrCodeData,
+    phone: instances[id].phone,
+    mode,
+    protected: instances[id].protected
+  }});
+  res.json({ success: true, mode });
+});
+
+app.post('/instances/:id/protect', (req, res) => {
+  const { id } = req.params;
+  if (!instances[id]) return res.status(404).json({ error: 'Instance not found' });
+  const isProtected = req.body?.protected === true;
+  instances[id].protected = isProtected;
+  saveConfig(id, { mode: instances[id].mode, protected: isProtected });
+  io.emit('instance_update', { instanceId: id, data: {
+    connectionStatus: instances[id].connectionStatus,
+    qrCodeData: instances[id].qrCodeData,
+    phone: instances[id].phone,
+    mode: instances[id].mode,
+    protected: isProtected
+  }});
+  res.json({ success: true, protected: isProtected });
 });
 
 app.post('/instances/:id/logout', (req, res) => {
   const { id } = req.params;
-  if (instances[id] && instances[id].sock) {
+  if (!instances[id]) return res.status(404).json({ error: 'Instance not found' });
+  if (instances[id].protected) {
+    return res.status(403).json({ error: 'Instância protegida — remova a proteção antes de desconectar' });
+  }
+  if (instances[id].sock) {
      instances[id].sock.logout();
      res.json({ success: true });
   } else {
@@ -244,6 +304,10 @@ app.post('/send', async (req, res) => {
   const instance = instances[chat.instanceId];
   if (!instance || !instance.sock || instance.connectionStatus !== 'CONNECTED') {
     return res.status(400).json({ error: 'Instância desconectada' });
+  }
+
+  if (instance.mode === 'monitor') {
+    return res.status(403).json({ error: 'Instância em modo monitor — não é permitido enviar mensagens' });
   }
 
   try {
@@ -276,11 +340,12 @@ server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   // Connect default instance if exists, else it waits for POST /instances
   // To make it easy, we will auto-load any folder starting with auth_info_
-  const folders = fs.readdirSync(__dirname).filter(f => f.startsWith('auth_info_'));
+  const folders = fs.readdirSync(AUTH_BASE).filter(f => f.startsWith('auth_info_'));
   if (folders.length > 0) {
     folders.forEach(f => {
       const id = f.replace('auth_info_', '');
-      connectToWhatsApp(id);
+      const cfg = loadConfig(id);
+      connectToWhatsApp(id, cfg.mode || 'bot', cfg.protected === true);
     });
   } else {
     // start one default instance for backward compatibility
