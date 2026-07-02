@@ -72,18 +72,69 @@ async function connectToWhatsApp(instanceId, mode = 'bot', isProtected = false) 
     }
 
     if (connection === 'close') {
-      const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      instances[instanceId].connectionStatus = 'DISCONNECTED';
-      safeData.connectionStatus = 'DISCONNECTED';
-      io.emit('instance_update', { instanceId, data: safeData });
-      if (shouldReconnect) {
+      const isLoggedOut = lastDisconnect.error?.output?.statusCode === DisconnectReason.loggedOut;
+      const isProtected = instances[instanceId]?.protected;
+
+      if (isLoggedOut && isProtected) {
+        const phone = instances[instanceId]?.phone || sock.user?.id?.split(':')[0] || '';
+        instances[instanceId].connectionStatus = 'DISCONNECTED';
+        instances[instanceId].sock = null;
+        io.emit('instance_update', { instanceId, data: safeData });
+
+        if (phone) {
+          setTimeout(async () => {
+            const newFolder = `${AUTH_BASE}/auth_info_${instanceId}`;
+            try {
+              const { state, saveCreds: sc } = await useMultiFileAuthState(newFolder);
+              const newSock = makeWASocket({
+                auth: state,
+                printQRInTerminal: false,
+                logger: pino({ level: 'silent' }),
+                browser: ['Secretaria Virtual', 'Chrome', '1.0.0']
+              });
+
+              instances[instanceId].sock = newSock;
+              instances[instanceId].connectionStatus = 'RECONNECTING';
+
+              newSock.ev.on('creds.update', sc);
+              newSock.ev.on('connection.update', (upd) => {
+                if (upd.connection === 'open') {
+                  instances[instanceId].connectionStatus = 'CONNECTED';
+                  instances[instanceId].pairingCode = '';
+                  instances[instanceId].phone = newSock.user?.id?.split(':')[0] || phone;
+                  io.emit('instance_update', { instanceId, data: {
+                    connectionStatus: 'CONNECTED', qrCodeData: '', phone: instances[instanceId].phone,
+                    mode: instances[instanceId].mode, protected: true, pairingCode: ''
+                  }});
+                }
+              });
+
+              await new Promise(r => setTimeout(r, 1500));
+              const code = await newSock.requestPairingCode(phone);
+              const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
+              instances[instanceId].pairingCode = formattedCode;
+              instances[instanceId].connectionStatus = 'PAIRING';
+
+              io.emit('instance_update', { instanceId, data: {
+                connectionStatus: 'PAIRING', qrCodeData: '', phone,
+                mode: instances[instanceId].mode, protected: true, pairingCode: formattedCode
+              }});
+            } catch (err) {
+              console.error(`Auto-repair failed for ${instanceId}:`, err);
+            }
+          }, 1000);
+        }
+      } else if (!isLoggedOut) {
+        instances[instanceId].connectionStatus = 'DISCONNECTED';
+        io.emit('instance_update', { instanceId, data: safeData });
         connectToWhatsApp(instanceId);
       } else {
         fs.rmSync(authFolder, { recursive: true, force: true });
         instances[instanceId].qrCodeData = '';
+        instances[instanceId].pairingCode = '';
         instances[instanceId].sock = null;
-        safeData.qrCodeData = '';
-        io.emit('instance_update', { instanceId, data: safeData });
+        instances[instanceId].connectionStatus = 'DISCONNECTED';
+        io.emit('instance_update', { instanceId, data: { ...safeData, qrCodeData: '', pairingCode: '', connectionStatus: 'DISCONNECTED' } });
       }
     } else if (connection === 'open') {
       instances[instanceId].connectionStatus = 'CONNECTED';
