@@ -1,5 +1,12 @@
 node_modules/
 .env
 auth_info_*
+sessions
+sessions_test
+.wwebjs_cache
 dist/
 .vite/
+logs
+coverage
+.DS_Store
+.vscode
