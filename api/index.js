@@ -20,7 +20,7 @@ const io = new Server(server, {
   }
 });
 
-const instances = {}; // instanceId -> { sock, qrCodeData, connectionStatus, phone, mode, protected }
+const instances = {}; // instanceId -> { sock, qrCodeData, connectionStatus, phone, mode, protected, pairingCode }
 const INSTANCE_FILE = '.instance_config.json';
 const AUTH_BASE = fs.existsSync('/data') ? '/data' : __dirname;
 
@@ -45,7 +45,7 @@ async function connectToWhatsApp(instanceId, mode = 'bot', isProtected = false) 
 
   saveConfig(instanceId, { mode, protected: isProtected });
   if (!instances[instanceId]) {
-    instances[instanceId] = { sock: null, qrCodeData: '', connectionStatus: 'DISCONNECTED', phone: '', mode, protected: false };
+    instances[instanceId] = { sock: null, qrCodeData: '', connectionStatus: 'DISCONNECTED', phone: '', mode, protected: false, pairingCode: '' };
   }
   instances[instanceId].sock = sock;
   instances[instanceId].mode = mode;
@@ -59,7 +59,8 @@ async function connectToWhatsApp(instanceId, mode = 'bot', isProtected = false) 
       qrCodeData: instances[instanceId].qrCodeData,
       phone: instances[instanceId].phone,
       mode: instances[instanceId].mode,
-      protected: instances[instanceId].protected
+      protected: instances[instanceId].protected,
+      pairingCode: instances[instanceId].pairingCode
     };
 
     if (qr) {
@@ -228,7 +229,8 @@ app.get('/instances', (req, res) => {
       qrCodeData: instances[id].qrCodeData,
       phone: instances[id].phone,
       mode: instances[id].mode,
-      protected: instances[id].protected
+      protected: instances[id].protected,
+      pairingCode: instances[id].pairingCode
     };
     return acc;
   }, {});
@@ -241,6 +243,89 @@ app.post('/instances', (req, res) => {
   const isProtected = req.body?.protected === true;
   connectToWhatsApp(instanceId, mode, isProtected);
   res.json({ instanceId, mode, protected: isProtected, message: `Instance created and connecting (mode: ${mode})` });
+});
+
+app.post('/instances/pair', async (req, res) => {
+  const { phone, mode } = req.body;
+  if (!phone) return res.status(400).json({ error: 'Número de telefone é obrigatório' });
+
+  const instanceId = crypto.randomBytes(4).toString('hex');
+  const isProtected = req.body?.protected === true;
+  const authFolder = `${AUTH_BASE}/auth_info_${instanceId}`;
+  const { state, saveCreds } = await useMultiFileAuthState(authFolder);
+
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+    logger: pino({ level: 'silent' }),
+    browser: ['Secretaria Virtual', 'Chrome', '1.0.0']
+  });
+
+  saveConfig(instanceId, { mode: mode || 'bot', protected: isProtected });
+  instances[instanceId] = { sock, qrCodeData: '', connectionStatus: 'PAIRING', phone, mode: mode || 'bot', protected: isProtected, pairingCode: '' };
+
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    const safeData = () => ({
+      connectionStatus: instances[instanceId].connectionStatus,
+      qrCodeData: instances[instanceId].qrCodeData,
+      phone: instances[instanceId].phone,
+      mode: instances[instanceId].mode,
+      protected: instances[instanceId].protected,
+      pairingCode: instances[instanceId].pairingCode
+    });
+
+    if (qr && !instances[instanceId].pairingCode) {
+      instances[instanceId].qrCodeData = await qrcode.toDataURL(qr);
+      instances[instanceId].connectionStatus = 'QR_READY';
+      io.emit('instance_update', { instanceId, data: safeData() });
+    }
+
+    if (connection === 'close') {
+      const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      instances[instanceId].connectionStatus = 'DISCONNECTED';
+      io.emit('instance_update', { instanceId, data: safeData() });
+      if (shouldReconnect) {
+        connectToWhatsApp(instanceId);
+      } else {
+        fs.rmSync(authFolder, { recursive: true, force: true });
+        instances[instanceId].qrCodeData = '';
+        instances[instanceId].sock = null;
+        io.emit('instance_update', { instanceId, data: safeData() });
+      }
+    } else if (connection === 'open') {
+      instances[instanceId].connectionStatus = 'CONNECTED';
+      instances[instanceId].qrCodeData = '';
+      instances[instanceId].pairingCode = '';
+      instances[instanceId].phone = sock.user.id.split(':')[0];
+      io.emit('instance_update', { instanceId, data: safeData() });
+    }
+  });
+
+  sock.ev.on('creds.update', saveCreds);
+
+  // Request pairing code after a brief delay
+  setTimeout(async () => {
+    try {
+      const code = await sock.requestPairingCode(phone);
+      const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
+      instances[instanceId].pairingCode = formattedCode;
+      instances[instanceId].connectionStatus = 'PAIRING';
+      io.emit('instance_update', { instanceId, data: {
+        connectionStatus: 'PAIRING',
+        qrCodeData: '',
+        phone,
+        mode: instances[instanceId].mode,
+        protected: instances[instanceId].protected,
+        pairingCode: formattedCode
+      }});
+    } catch (err) {
+      console.error(`Pairing code error for ${phone}:`, err);
+    }
+  }, 2000);
+
+  res.json({ instanceId, phone, pairingRequested: true, message: 'Solicitação de pareamento enviada' });
 });
 
 app.post('/instances/:id/mode', (req, res) => {
@@ -257,7 +342,8 @@ app.post('/instances/:id/mode', (req, res) => {
     qrCodeData: instances[id].qrCodeData,
     phone: instances[id].phone,
     mode,
-    protected: instances[id].protected
+    protected: instances[id].protected,
+    pairingCode: instances[id].pairingCode
   }});
   res.json({ success: true, mode });
 });
@@ -273,7 +359,8 @@ app.post('/instances/:id/protect', (req, res) => {
     qrCodeData: instances[id].qrCodeData,
     phone: instances[id].phone,
     mode: instances[id].mode,
-    protected: isProtected
+    protected: isProtected,
+    pairingCode: instances[id].pairingCode
   }});
   res.json({ success: true, protected: isProtected });
 });

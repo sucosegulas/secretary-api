@@ -29,6 +29,9 @@ export interface Instance {
   connectionStatus: string;
   qrCodeData: string;
   phone: string;
+  mode: 'bot' | 'monitor';
+  protected: boolean;
+  pairingCode: string;
 }
 
 export default function Dashboard() {
@@ -94,10 +97,33 @@ export default function Dashboard() {
   };
 
   const addInstance = async () => {
-    try {
-      await fetch(`${API_URL}/instances`, { method: 'POST' });
-    } catch (err) {
-      console.error('Failed to add instance', err);
+    const usePairing = window.confirm('Clique OK para conectar com CÓDIGO DE PAR (envia código para o número)\nClique Cancelar para conectar com QR CODE');
+    const mode = window.confirm('Clique OK para modo ROBÔ (responde automaticamente)\nClique Cancelar para modo MONITOR (apenas visualizar)')
+      ? 'bot'
+      : 'monitor';
+
+    if (usePairing) {
+      const phone = prompt('Digite o número do WhatsApp com DDD (ex: 5549998400285):');
+      if (!phone) return;
+      try {
+        await fetch(`${API_URL}/instances/pair`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone, mode }),
+        });
+      } catch (err) {
+        console.error('Failed to pair instance', err);
+      }
+    } else {
+      try {
+        await fetch(`${API_URL}/instances`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode }),
+        });
+      } catch (err) {
+        console.error('Failed to add instance', err);
+      }
     }
   };
 
@@ -134,6 +160,7 @@ export default function Dashboard() {
                   chat={chats[activeChatId]} 
                   onSend={handleSendMessage}
                   onResolve={handleResolve}
+                  instances={instances}
                 />
               ) : (
                 <div className="flex h-full items-center justify-center text-slate-400">
@@ -163,3 +190,4 @@ export default function Dashboard() {
       </main>
     </div>
   );
+}
